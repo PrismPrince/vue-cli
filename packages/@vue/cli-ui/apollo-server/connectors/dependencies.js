@@ -1,7 +1,7 @@
 const fs = require('fs')
 const path = require('path')
 const LRU = require('lru-cache')
-const semver = require('semver')
+const { chalk, semver } = require('@vue/cli-shared-utils')
 // Connectors
 const cwd = require('./cwd')
 const folders = require('./folders')
@@ -10,18 +10,12 @@ const logs = require('./logs')
 // Context
 const getContext = require('../context')
 // Utils
-const { isPlugin } = require('@vue/cli-shared-utils')
-const { resolveModule } = require('@vue/cli/lib/util/module')
-const getPackageVersion = require('@vue/cli/lib/util/getPackageVersion')
-const {
-  progress: installProgress,
-  installPackage,
-  uninstallPackage,
-  updatePackage
-} = require('@vue/cli/lib/util/installDeps')
-const { getCommand } = require('../util/command')
+const { isPlugin, resolveModule } = require('@vue/cli-shared-utils')
+const { progress: installProgress } = require('@vue/cli/lib/util/executeCommand')
+const PackageManager = require('@vue/cli/lib/util/ProjectPackageManager')
 const { resolveModuleRoot } = require('../util/resolve-path')
 const { notify } = require('../util/notification')
+const { log } = require('../util/logger')
 
 const PROGRESS_ID = 'dependency-installation'
 const CLI_SERVICE = '@vue/cli-service'
@@ -39,10 +33,10 @@ function list (file, context) {
   const pkg = folders.readPackage(file, context)
   dependencies = []
   dependencies = dependencies.concat(
-    findDependencies(pkg.devDependencies || {}, 'devDependencies', context)
+    findDependencies(pkg.devDependencies || {}, 'devDependencies', file, context)
   )
   dependencies = dependencies.concat(
-    findDependencies(pkg.dependencies || {}, 'dependencies', context)
+    findDependencies(pkg.dependencies || {}, 'dependencies', file, context)
   )
   return dependencies
 }
@@ -53,51 +47,86 @@ function findOne (id, context) {
   )
 }
 
-function findDependencies (deps, type, context) {
+function findDependencies (deps, type, file, context) {
   return Object.keys(deps).filter(
     id => !isPlugin(id) && id !== CLI_SERVICE
   ).map(
     id => ({
       id,
       versionRange: deps[id],
-      installed: fs.existsSync(getPath(id)),
-      website: getLink(id, context),
-      type
+      installed: isInstalled({ id, file }),
+      website: getLink({ id, file }, context),
+      type,
+      baseFir: file
     })
   )
 }
 
-function getPath (id) {
-  return resolveModuleRoot(resolveModule(path.join(id, 'package.json'), cwd.get()), id)
+function getPath ({ id, file = cwd.get() }) {
+  const filePath = resolveModule(path.join(id, 'package.json'), file)
+  if (!filePath) return
+  return resolveModuleRoot(filePath, id)
 }
 
-function readPackage (id, context) {
+function isInstalled ({ id, file = cwd.get() }) {
+  const resolvedPath = getPath({ id, file })
+  return resolvedPath && fs.existsSync(resolvedPath)
+}
+
+function readPackage ({ id, file }, context) {
   try {
-    return folders.readPackage(getPath(id), context)
+    return folders.readPackage(getPath({ id, file }), context)
   } catch (e) {
     console.log(e)
   }
   return {}
 }
 
-function invalidatePackage (id, context) {
-  return folders.invalidatePackage(getPath(id), context)
+function invalidatePackage ({ id, file }, context) {
+  return folders.invalidatePackage(getPath({ id, file }), context)
 }
 
-async function getVersion ({ id, installed, versionRange }, context) {
+async function getMetadata (id, context) {
+  let metadata = metadataCache.get(id)
+  if (metadata) {
+    return metadata
+  }
+
+  try {
+    metadata = await (new PackageManager({ context: cwd.get() })).getMetadata(id)
+  } catch (e) {
+    // No connection?
+  }
+
+  if (metadata) {
+    metadataCache.set(id, metadata)
+    return metadata
+  } else {
+    log('Dependencies', chalk.yellow('Can\'t load metadata'), id)
+  }
+}
+
+async function getVersion ({ id, installed, versionRange, baseDir }, context) {
   let current
+
+  // Is local dep
+  const localPath = getLocalPath(id, context)
+
+  // Read module package.json
   if (installed) {
-    const pkg = readPackage(id, context)
+    const pkg = readPackage({ id, file: baseDir }, context)
     current = pkg.version
   } else {
     current = null
   }
+
+  // Metadata
   let latest, wanted
   const metadata = await getMetadata(id, context)
   if (metadata) {
     latest = metadata['dist-tags'].latest
 
-    const versions = Object.keys(metadata.versions)
+    const versions = Array.isArray(metadata.versions) ? metadata.versions : Object.keys(metadata.versions)
     wanted = semver.maxSatisfying(versions, versionRange)
   }
 
@@ -108,8 +137,25 @@ async function getVersion ({ id, installed, versionRange }, context) {
     current,
     latest,
     wanted,
-    range: versionRange
+    range: versionRange,
+    localPath
   }
+}
+
+function getLocalPath (id, context) {
+  const projects = require('./projects')
+  const projectPkg = folders.readPackage(projects.getCurrent(context).path, context, true)
+  const deps = Object.assign(
+    {},
+    projectPkg.dependencies || {},
+    projectPkg.devDependencies || {}
+  )
+  const range = deps[id]
+  if (range && range.match(/^file:/)) {
+    const localPath = range.substr('file:'.length)
+    return path.resolve(cwd.get(), localPath)
+  }
+  return null
 }
 
 async function getDescription ({ id }, context) {
@@ -120,37 +166,32 @@ async function getDescription ({ id }, context) {
   return null
 }
 
-async function getMetadata (id, context) {
-  let metadata = metadataCache.get(id)
-  if (metadata) {
-    return metadata
-  }
-
-  const res = await getPackageVersion(id)
-  if (res.statusCode === 200) {
-    metadata = res.body
-  }
-
-  if (metadata) {
-    metadataCache.set(id, metadata)
-    return metadata
-  }
-}
-
-function getLink (id, context) {
-  const pkg = readPackage(id, context)
+function getLink ({ id, file }, context) {
+  const pkg = readPackage({ id, file }, context)
   return pkg.homepage ||
     (pkg.repository && pkg.repository.url) ||
-    `https://www.npmjs.com/package/${id.replace(`/`, `%2F`)}`
+    `https://www.npmjs.com/package/${id.replace('/', '%2F')}`
 }
 
-function install ({ id, type }, context) {
+function install ({ id, type, range }, context) {
   return progress.wrap(PROGRESS_ID, context, async setProgress => {
     setProgress({
       status: 'dependency-install',
       args: [id]
     })
-    await installPackage(cwd.get(), getCommand(), null, id, type === 'devDependencies')
+
+    let arg
+    if (range) {
+      arg = `${id}@${range}`
+    } else {
+      arg = id
+    }
+
+    const pm = new PackageManager({ context: cwd.get() })
+    await pm.add(arg, {
+      tilde: !range && isPlugin(id),
+      dev: type === 'devDependencies'
+    })
 
     logs.add({
       message: `Dependency ${id} installed`,
@@ -158,7 +199,7 @@ function install ({ id, type }, context) {
     }, context)
 
     notify({
-      title: `Dependency installed`,
+      title: 'Dependency installed',
       message: `Dependency ${id} successfully installed`,
       icon: 'done'
     })
@@ -178,7 +219,8 @@ function uninstall ({ id }, context) {
 
     const dep = findOne(id, context)
 
-    await uninstallPackage(cwd.get(), getCommand(), null, id)
+    const pm = new PackageManager({ context: cwd.get() })
+    await pm.remove(id)
 
     logs.add({
       message: `Dependency ${id} uninstalled`,
@@ -186,7 +228,7 @@ function uninstall ({ id }, context) {
     }, context)
 
     notify({
-      title: `Dependency uninstalled`,
+      title: 'Dependency uninstalled',
       message: `Dependency ${id} successfully uninstalled`,
       icon: 'done'
     })
@@ -204,7 +246,9 @@ function update ({ id }, context) {
 
     const dep = findOne(id, context)
     const { current, wanted } = await getVersion(dep, context)
-    await updatePackage(cwd.get(), getCommand(), null, id)
+
+    const pm = new PackageManager({ context: cwd.get() })
+    await pm.upgrade(id)
 
     logs.add({
       message: `Dependency ${id} updated from ${current} to ${wanted}`,
@@ -212,12 +256,12 @@ function update ({ id }, context) {
     }, context)
 
     notify({
-      title: `Dependency updated`,
+      title: 'Dependency updated',
       message: `Dependency ${id} was successfully updated`,
       icon: 'done'
     })
 
-    invalidatePackage(id)
+    invalidatePackage({ id }, context)
 
     return findOne(id)
   })
@@ -226,19 +270,19 @@ function update ({ id }, context) {
 function updateAll (context) {
   return progress.wrap(PROGRESS_ID, context, async setProgress => {
     const deps = list(cwd.get(), context)
-    let updatedDeps = []
+    const updatedDeps = []
     for (const dep of deps) {
       const version = await getVersion(dep, context)
       if (version.current !== version.wanted) {
         updatedDeps.push(dep)
-        invalidatePackage(dep.id, context)
+        invalidatePackage({ id: dep.id }, context)
       }
     }
 
     if (!updatedDeps.length) {
       notify({
-        title: `No updates available`,
-        message: `No dependency to update in the version ranges declared in package.json`,
+        title: 'No updates available',
+        message: 'No dependency to update in the version ranges declared in package.json',
         icon: 'done'
       })
       return []
@@ -249,12 +293,11 @@ function updateAll (context) {
       args: [updatedDeps.length]
     })
 
-    await updatePackage(cwd.get(), getCommand(), null, updatedDeps.map(
-      p => p.id
-    ).join(' '))
+    const pm = new PackageManager({ context: cwd.get() })
+    await pm.upgrade(updatedDeps.map(p => p.id).join(' '))
 
     notify({
-      title: `Dependencies updated`,
+      title: 'Dependencies updated',
       message: `${updatedDeps.length} dependencies were successfully updated`,
       icon: 'done'
     })

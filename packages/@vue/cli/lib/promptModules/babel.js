@@ -4,6 +4,7 @@ module.exports = cli => {
     value: 'babel',
     short: 'Babel',
     description: 'Transpile modern JavaScript to older versions (for compatibility)',
+    link: 'https://babeljs.io/',
     checked: true
   })
 
@@ -12,10 +13,8 @@ module.exports = cli => {
       if (!answers.useTsWithBabel) {
         return
       }
-    } else {
-      if (!answers.features.includes('babel')) {
-        return
-      }
+    } else if (!answers.features.includes('babel')) {
+      return
     }
     options.plugins['@vue/cli-plugin-babel'] = {}
   })

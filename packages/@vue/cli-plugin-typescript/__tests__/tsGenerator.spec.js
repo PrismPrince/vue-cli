@@ -17,6 +17,8 @@ test('generate files', async () => {
   expect(files['src/main.ts']).toBeTruthy()
   expect(files['src/main.js']).toBeFalsy()
   expect(files['src/App.vue']).toMatch('<script lang="ts">')
+  // checks that the Home.vue file has not been created, even empty
+  expect(files.hasOwnProperty('src/views/Home.vue')).toBeFalsy()
 })
 
 test('classComponent', async () => {
@@ -34,7 +36,6 @@ test('classComponent', async () => {
   expect(pkg.dependencies).toHaveProperty('vue-property-decorator')
 
   expect(files['tsconfig.json']).toMatch(`"experimentalDecorators": true`)
-  expect(files['tsconfig.json']).toMatch(`"emitDecoratorMetadata": true`)
   expect(files['src/App.vue']).toMatch(
     `export default class App extends Vue {`
   )
@@ -59,8 +60,24 @@ test('use with Babel', async () => {
     }
   ])
 
-  expect(files['babel.config.js']).toMatch(`presets: [\n    '@vue/app'\n  ]`)
+  expect(files['babel.config.js']).toMatch(`presets: [\n    '@vue/cli-plugin-babel/preset'\n  ]`)
   expect(files['tsconfig.json']).toMatch(`"target": "esnext"`)
+})
+
+test('use with router', async () => {
+  const { files } = await generateWithPlugin([
+    {
+      id: '@vue/cli-plugin-router',
+      apply: require('@vue/cli-plugin-router/generator'),
+      options: {}
+    },
+    {
+      id: 'ts',
+      apply: require('../generator'),
+      options: {}
+    }
+  ])
+  expect(files['src/views/Home.vue']).toMatch('<div class=\"home\">')
 })
 
 test('lint', async () => {
@@ -111,17 +128,18 @@ test('tsconfig.json should be valid json', async () => {
   expect(() => {
     JSON.parse(files['tsconfig.json'])
   }).not.toThrow()
+  expect(files['tsconfig.json']).not.toMatch('"  ')
 })
 
 test('compat with unit-mocha', async () => {
-  const { pkg } = await generateWithPlugin([
+  const { pkg, files } = await generateWithPlugin([
     {
       id: '@vue/cli-plugin-unit-mocha',
-      apply: () => {},
+      apply: require('@vue/cli-plugin-unit-mocha/generator'),
       options: {}
     },
     {
-      id: 'ts',
+      id: '@vue/cli-plugin-typescript',
       apply: require('../generator'),
       options: {
         lint: true,
@@ -132,17 +150,19 @@ test('compat with unit-mocha', async () => {
 
   expect(pkg.devDependencies).toHaveProperty('@types/mocha')
   expect(pkg.devDependencies).toHaveProperty('@types/chai')
+
+  expect(files['tsconfig.json']).not.toMatch('"  ')
 })
 
 test('compat with unit-jest', async () => {
-  const { pkg } = await generateWithPlugin([
+  const { pkg, files } = await generateWithPlugin([
     {
       id: '@vue/cli-plugin-unit-jest',
-      apply: () => {},
+      apply: require('@vue/cli-plugin-unit-jest/generator'),
       options: {}
     },
     {
-      id: 'ts',
+      id: '@vue/cli-plugin-typescript',
       apply: require('../generator'),
       options: {
         lint: true,
@@ -152,4 +172,6 @@ test('compat with unit-jest', async () => {
   ])
 
   expect(pkg.devDependencies).toHaveProperty('@types/jest')
+
+  expect(files['tsconfig.json']).not.toMatch('"  ')
 })

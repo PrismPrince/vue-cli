@@ -14,9 +14,9 @@ module.exports = (api, options) => {
       `All Cypress CLI options are also supported:\n` +
       chalk.yellow(`https://docs.cypress.io/guides/guides/command-line.html#cypress-run`)
   }, async (args, rawArgs) => {
-    removeArg(rawArgs, 'headless', 0)
     removeArg(rawArgs, 'mode')
     removeArg(rawArgs, 'url')
+    removeArg(rawArgs, 'config')
 
     info(`Starting e2e tests...`)
 
@@ -24,9 +24,10 @@ module.exports = (api, options) => {
       ? { url: args.url }
       : await api.service.run('serve')
 
+    const configs = typeof args.config === 'string' ? args.config.split(',') : []
     const cyArgs = [
       args.headless ? 'run' : 'open', // open or run
-      '--config', `baseUrl=${url}`,
+      '--config', [`baseUrl=${url}`, ...configs].join(','),
       ...rawArgs
     ]
 
@@ -45,23 +46,17 @@ module.exports = (api, options) => {
 
     return runner
   })
-
-  // TODO remove in RC
-  api.registerCommand('e2e', (args, rawArgv) => {
-    const { warn } = require('@vue/cli-shared-utils')
-    warn(`Deprecation Warning: "vue-cli-service e2e" has been renamed to "vue-cli-service test:e2e".`)
-    return api.service.run('test:e2e', args, rawArgv)
-  })
 }
 
 module.exports.defaultModes = {
   'test:e2e': 'production'
 }
 
-function removeArg (rawArgs, arg, offset = 1) {
-  const matchRE = new RegExp(`^--${arg}`)
-  const equalRE = new RegExp(`^--${arg}=`)
-  const i = rawArgs.findIndex(arg => matchRE.test(arg))
+function removeArg (rawArgs, argToRemove, offset = 1) {
+  const matchRE = new RegExp(`^--${argToRemove}$`)
+  const equalRE = new RegExp(`^--${argToRemove}=`)
+
+  const i = rawArgs.findIndex(arg => matchRE.test(arg) || equalRE.test(arg))
   if (i > -1) {
     rawArgs.splice(i, offset + (equalRE.test(rawArgs[i]) ? 0 : 1))
   }

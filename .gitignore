@@ -7,3 +7,6 @@ dist
 temp
 .vuerc
 .version
+.versions
+.changelog
+package-lock.json

@@ -18,6 +18,8 @@ extend type Mutation {
   taskStop (id: ID!): Task
   taskLogsClear (id: ID!): Task
   taskOpen (id: ID!): Boolean
+  taskSaveParameters (id: ID!): [Prompt]
+  taskRestoreParameters (id: ID!): [Prompt]
 }
 
 extend type Subscription {
@@ -71,7 +73,7 @@ type TaskView {
 exports.resolvers = {
   Task: {
     prompts: (task, args, context) => tasks.getPrompts(task.id, context),
-    plugin: (task, args, context) => plugins.findOne(task.pluginId, context),
+    plugin: (task, args, context) => plugins.findOne({ id: task.pluginId, file: task.path }, context),
     project: (task, args, context) => projects.findByPath(task.path, context)
   },
 
@@ -84,7 +86,9 @@ exports.resolvers = {
     taskRun: (root, { id }, context) => tasks.run(id, context),
     taskStop: (root, { id }, context) => tasks.stop(id, context),
     taskLogsClear: (root, { id }, context) => tasks.clearLogs(id, context),
-    taskOpen: (root, { id }, context) => tasks.open(id, context)
+    taskOpen: (root, { id }, context) => tasks.open(id, context),
+    taskSaveParameters: (root, { id }, context) => tasks.saveParameters({ id }, context),
+    taskRestoreParameters: (root, { id }, context) => tasks.restoreParameters({ id }, context)
   },
 
   Subscription: {

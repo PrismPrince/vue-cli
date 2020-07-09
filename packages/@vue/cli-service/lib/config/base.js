@@ -1,9 +1,31 @@
+const { semver, loadModule } = require('@vue/cli-shared-utils')
+
 module.exports = (api, options) => {
   api.chainWebpack(webpackConfig => {
     const isLegacyBundle = process.env.VUE_CLI_MODERN_MODE && !process.env.VUE_CLI_MODERN_BUILD
     const resolveLocal = require('../util/resolveLocal')
     const getAssetPath = require('../util/getAssetPath')
     const inlineLimit = 4096
+
+    const genAssetSubPath = dir => {
+      return getAssetPath(
+        options,
+        `${dir}/[name]${options.filenameHashing ? '.[hash:8]' : ''}.[ext]`
+      )
+    }
+
+    const genUrlLoaderOptions = dir => {
+      return {
+        limit: inlineLimit,
+        // use explicit fallback to avoid regression in url-loader>=1.1.0
+        fallback: {
+          loader: require.resolve('file-loader'),
+          options: {
+            name: genAssetSubPath(dir)
+          }
+        }
+      }
+    }
 
     webpackConfig
       .mode('development')
@@ -14,12 +36,15 @@ module.exports = (api, options) => {
       .output
         .path(api.resolve(options.outputDir))
         .filename(isLegacyBundle ? '[name]-legacy.js' : '[name].js')
-        .publicPath(options.baseUrl)
+        .publicPath(options.publicPath)
 
     webpackConfig.resolve
-      .set('symlinks', false)
+      // This plugin can be removed once we switch to Webpack 6
+      .plugin('pnp')
+        .use({ ...require('pnp-webpack-plugin') })
+        .end()
       .extensions
-        .merge(['.js', '.jsx', '.vue', '.json'])
+        .merge(['.mjs', '.js', '.jsx', '.vue', '.json', '.wasm'])
         .end()
       .modules
         .add('node_modules')
@@ -28,14 +53,11 @@ module.exports = (api, options) => {
         .end()
       .alias
         .set('@', api.resolve('src'))
-        .set(
-          'vue$',
-          options.runtimeCompiler
-            ? 'vue/dist/vue.esm.js'
-            : 'vue/dist/vue.runtime.esm.js'
-        )
 
     webpackConfig.resolveLoader
+      .plugin('pnp-loaders')
+        .use({ ...require('pnp-webpack-plugin').topLevelLoader })
+        .end()
       .modules
         .add('node_modules')
         .add(api.resolve('node_modules'))
@@ -44,34 +66,79 @@ module.exports = (api, options) => {
     webpackConfig.module
       .noParse(/^(vue|vue-router|vuex|vuex-router-sync)$/)
 
-    // js is handled by cli-plugin-bable ---------------------------------------
+    // js is handled by cli-plugin-babel ---------------------------------------
 
     // vue-loader --------------------------------------------------------------
-    const vueLoaderCacheConfig = api.genCacheConfig('vue-loader', {
-      'vue-loader': require('vue-loader/package.json').version,
-      /* eslint-disable-next-line node/no-extraneous-require */
-      '@vue/component-compiler-utils': require('@vue/component-compiler-utils/package.json').version,
-      'vue-template-compiler': require('vue-template-compiler/package.json').version
-    })
+    const vue = loadModule('vue', api.service.context)
 
-    webpackConfig.module
-      .rule('vue')
-        .test(/\.vue$/)
-        .use('cache-loader')
-          .loader('cache-loader')
-          .options(vueLoaderCacheConfig)
+    if (semver.major(vue.version) === 2) {
+      // for Vue 2 projects
+      const vueLoaderCacheConfig = api.genCacheConfig('vue-loader', {
+        'vue-loader': require('vue-loader/package.json').version,
+        '@vue/component-compiler-utils': require('@vue/component-compiler-utils/package.json').version,
+        'vue-template-compiler': require('vue-template-compiler/package.json').version
+      })
+
+      webpackConfig.resolve
+        .alias
+          .set(
+            'vue$',
+            options.runtimeCompiler
+              ? 'vue/dist/vue.esm.js'
+              : 'vue/dist/vue.runtime.esm.js'
+          )
+
+      webpackConfig.module
+        .rule('vue')
+          .test(/\.vue$/)
+          .use('cache-loader')
+            .loader(require.resolve('cache-loader'))
+            .options(vueLoaderCacheConfig)
+            .end()
+          .use('vue-loader')
+            .loader(require.resolve('vue-loader'))
+            .options(Object.assign({
+              compilerOptions: {
+                whitespace: 'condense'
+              }
+            }, vueLoaderCacheConfig))
+
+      webpackConfig
+        .plugin('vue-loader')
+          .use(require('vue-loader').VueLoaderPlugin)
+    } else if (semver.major(vue.version) === 3) {
+      // for Vue 3 projects
+      const vueLoaderCacheConfig = api.genCacheConfig('vue-loader', {
+        'vue-loader': require('vue-loader-v16/package.json').version,
+        '@vue/compiler-sfc': require('@vue/compiler-sfc/package.json').version
+      })
+
+      webpackConfig.resolve
+        .alias
+          .set(
+            'vue$',
+            options.runtimeCompiler
+              ? 'vue/dist/vue.esm-bundler.js'
+              : '@vue/runtime-dom'
+          )
+
+      webpackConfig.module
+        .rule('vue')
+          .test(/\.vue$/)
+          .use('cache-loader')
+            .loader(require.resolve('cache-loader'))
+            .options(vueLoaderCacheConfig)
+            .end()
+          .use('vue-loader')
+            .loader(require.resolve('vue-loader'))
+            .options(vueLoaderCacheConfig)
+            .end()
           .end()
-        .use('vue-loader')
-          .loader('vue-loader')
-          .options(Object.assign({
-            compilerOptions: {
-              preserveWhitespace: false
-            }
-          }, vueLoaderCacheConfig))
 
-    webpackConfig
-      .plugin('vue-loader')
-      .use(require('vue-loader/lib/plugin'))
+      webpackConfig
+        .plugin('vue-loader')
+          .use(require('vue-loader-v16').VueLoaderPlugin)
+    }
 
     // static assets -----------------------------------------------------------
 
@@ -79,11 +146,8 @@ module.exports = (api, options) => {
       .rule('images')
         .test(/\.(png|jpe?g|gif|webp)(\?.*)?$/)
         .use('url-loader')
-          .loader('url-loader')
-          .options({
-            limit: inlineLimit,
-            name: getAssetPath(options, `img/[name].[hash:8].[ext]`)
-          })
+          .loader(require.resolve('url-loader'))
+          .options(genUrlLoaderOptions('img'))
 
     // do not base64-inline SVGs.
     // https://github.com/facebookincubator/create-react-app/pull/1180
@@ -91,39 +155,52 @@ module.exports = (api, options) => {
       .rule('svg')
         .test(/\.(svg)(\?.*)?$/)
         .use('file-loader')
-          .loader('file-loader')
+          .loader(require.resolve('file-loader'))
           .options({
-            name: getAssetPath(options, `img/[name].[hash:8].[ext]`)
+            name: genAssetSubPath('img')
           })
 
     webpackConfig.module
       .rule('media')
         .test(/\.(mp4|webm|ogg|mp3|wav|flac|aac)(\?.*)?$/)
         .use('url-loader')
-          .loader('url-loader')
-          .options({
-            limit: inlineLimit,
-            name: getAssetPath(options, `media/[name].[hash:8].[ext]`)
-          })
+          .loader(require.resolve('url-loader'))
+          .options(genUrlLoaderOptions('media'))
 
     webpackConfig.module
       .rule('fonts')
         .test(/\.(woff2?|eot|ttf|otf)(\?.*)?$/i)
         .use('url-loader')
-          .loader('url-loader')
-          .options({
-            limit: inlineLimit,
-            name: getAssetPath(options, `fonts/[name].[hash:8].[ext]`)
-          })
+          .loader(require.resolve('url-loader'))
+          .options(genUrlLoaderOptions('fonts'))
 
     // Other common pre-processors ---------------------------------------------
 
+    const maybeResolve = name => {
+      try {
+        return require.resolve(name)
+      } catch (error) {
+        return name
+      }
+    }
+
     webpackConfig.module
       .rule('pug')
-      .test(/\.pug$/)
-      .use('pug-plain-loader')
-        .loader('pug-plain-loader')
-        .end()
+        .test(/\.pug$/)
+          .oneOf('pug-vue')
+            .resourceQuery(/vue/)
+            .use('pug-plain-loader')
+              .loader(maybeResolve('pug-plain-loader'))
+              .end()
+            .end()
+          .oneOf('pug-template')
+            .use('raw')
+              .loader(maybeResolve('raw-loader'))
+              .end()
+            .use('pug-plain-loader')
+              .loader(maybeResolve('pug-plain-loader'))
+              .end()
+            .end()
 
     // shims
 
@@ -147,7 +224,7 @@ module.exports = (api, options) => {
     const resolveClientEnv = require('../util/resolveClientEnv')
     webpackConfig
       .plugin('define')
-        .use(require('webpack/lib/DefinePlugin'), [
+        .use(require('webpack').DefinePlugin, [
           resolveClientEnv(options)
         ])
 
@@ -160,9 +237,15 @@ module.exports = (api, options) => {
     const { transformer, formatter } = require('../util/resolveLoaderError')
     webpackConfig
       .plugin('friendly-errors')
-        .use(require('friendly-errors-webpack-plugin'), [{
+        .use(require('@soda/friendly-errors-webpack-plugin'), [{
           additionalTransformers: [transformer],
           additionalFormatters: [formatter]
         }])
+
+    const TerserPlugin = require('terser-webpack-plugin')
+    const terserOptions = require('./terserOptions')
+    webpackConfig.optimization
+      .minimizer('terser')
+        .use(TerserPlugin, [terserOptions(options)])
   })
 }

@@ -1,56 +1,87 @@
-const fs = require('fs-extra')
-const path = require('path')
-const fsCachePath = path.resolve(__dirname, '.version')
+const { semver } = require('@vue/cli-shared-utils')
+const PackageManager = require('./ProjectPackageManager')
+const { loadOptions, saveOptions } = require('../options')
+
+let sessionCached
+const pm = new PackageManager()
 
 module.exports = async function getVersions () {
+  if (sessionCached) {
+    return sessionCached
+  }
+
   let latest
-  const current = require(`../../package.json`).version
+  const local = require(`../../package.json`).version
   if (process.env.VUE_CLI_TEST || process.env.VUE_CLI_DEBUG) {
-    return {
-      latest: current,
-      current
-    }
+    return (sessionCached = {
+      current: local,
+      latest: local,
+      latestMinor: local
+    })
   }
 
-  if (fs.existsSync(fsCachePath)) {
-    // if we haven't check for a new version in a week, force a full check
-    // before proceeding.
-    const lastChecked = (await fs.stat(fsCachePath)).mtimeMs
-    const daysPassed = (Date.now() - lastChecked) / (60 * 60 * 1000 * 24)
-    if (daysPassed > 7) {
-      await getAndCacheLatestVersion(current)
+  // should also check for prerelease versions if the current one is a prerelease
+  const includePrerelease = !!semver.prerelease(local)
+
+  const { latestVersion = local, lastChecked = 0 } = loadOptions()
+  const cached = latestVersion
+  const daysPassed = (Date.now() - lastChecked) / (60 * 60 * 1000 * 24)
+
+  let error
+  if (daysPassed > 1) {
+    // if we haven't check for a new version in a day, wait for the check
+    // before proceeding
+    try {
+      latest = await getAndCacheLatestVersion(cached, includePrerelease)
+    } catch (e) {
+      latest = cached
+      error = e
     }
-    latest = await fs.readFile(fsCachePath, 'utf-8')
   } else {
-    // if the cache file doesn't exist, this is likely a fresh install
-    // so no need to check
-    latest = current
+    // Otherwise, do a check in the background. If the result was updated,
+    // it will be used for the next 24 hours.
+    // don't throw to interrupt the user if the background check failed
+    getAndCacheLatestVersion(cached, includePrerelease).catch(() => {})
+    latest = cached
   }
 
-  // Do a check in the background. The cached file will be used for the next
-  // startup within a week.
-  getAndCacheLatestVersion(current)
-
-  return {
-    current,
-    latest
+  // if the installed version is updated but the cache doesn't update
+  if (semver.gt(local, latest) && !semver.prerelease(local)) {
+    latest = local
   }
+
+  let latestMinor = `${semver.major(latest)}.${semver.minor(latest)}.0`
+  if (
+    // if the latest version contains breaking changes
+    /major/.test(semver.diff(local, latest)) ||
+    // or if using `next` branch of cli
+    (semver.gte(local, latest) && semver.prerelease(local))
+  ) {
+    // fallback to the local cli version number
+    latestMinor = local
+  }
+
+  return (sessionCached = {
+    current: local,
+    latest,
+    latestMinor,
+    error
+  })
 }
 
 // fetch the latest version and save it on disk
 // so that it is available immediately next time
-let sentCheckRequest = false
-async function getAndCacheLatestVersion (current) {
-  if (sentCheckRequest) {
-    return
+async function getAndCacheLatestVersion (cached, includePrerelease) {
+  let version = await pm.getRemoteVersion('vue-cli-version-marker', 'latest')
+
+  if (includePrerelease) {
+    const next = await pm.getRemoteVersion('vue-cli-version-marker', 'next')
+    version = semver.gt(next, version) ? next : version
   }
-  sentCheckRequest = true
-  const getPackageVersion = require('./getPackageVersion')
-  const res = await getPackageVersion('vue-cli-version-marker', 'latest')
-  if (res.statusCode === 200) {
-    const { version } = res.body
-    if (version !== current) {
-      await fs.writeFile(fsCachePath, version)
-    }
+
+  if (semver.valid(version) && version !== cached) {
+    saveOptions({ latestVersion: version, lastChecked: Date.now() })
+    return version
   }
+  return cached
 }

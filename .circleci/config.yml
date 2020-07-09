@@ -5,6 +5,12 @@ defaults: &defaults
   docker:
     - image: vuejs/ci
 
+workflow_filters: &filters
+  filters:
+    branches:
+      ignore:
+      - docs
+
 jobs:
   install:
     <<: *defaults
@@ -12,12 +18,10 @@ jobs:
       - checkout
       - restore_cache:
           keys:
-            - v1-vue-cli-{{ .Branch }}-{{ checksum "yarn.lock" }}
-            - v1-vue-cli-{{ .Branch }}-
-            - v1-vue-cli
+            - v2-vue-cli-{{ checksum "yarn.lock" }}
       - run: yarn --network-timeout 600000
       - save_cache:
-          key: v1-vue-cli-{{ .Branch }}-{{ checksum "yarn.lock" }}
+          key: v2-vue-cli-{{ checksum "yarn.lock" }}
           paths:
             - node_modules/
             - ~/.cache
@@ -46,16 +50,26 @@ jobs:
     steps:
       - attach_workspace:
           at: ~/
-      - run: yarn lint
+      - run: yarn lint-without-fix
       - run: yarn check-links
-      - run: yarn test -p cli-service-global,eslint,pwa,babel,babel-preset-app
+      - restore_cache:
+          keys:
+            # TODO: should use a more accurate cache key
+            - v2-vue-cli-offline-{{ checksum "yarn.lock" }}
+      - run: yarn config set yarn-offline-mirror ~/npm-packages-offline-cache
+      - run: yarn test -p cli-service-global,eslint,pwa,babel,babel-preset-app,vuex,router
+      - save_cache:
+          key: v2-vue-cli-offline-{{ checksum "yarn.lock" }}
+          paths:
+            - ~/npm-packages-offline-cache
 
   group-4:
     <<: *defaults
     steps:
       - attach_workspace:
           at: ~/
-      - run: yarn test -p unit-mocha,unit-jest,e2e-nightwatch,e2e-cypress
+      - run: yarn test -p unit-mocha,unit-jest,e2e-cypress
+      # e2e-nightwatch was left out due to some unknown issues with selenium and the CI image
       - run: yarn test tsPluginE2e
 
   cli-ui:
@@ -73,19 +87,25 @@ workflows:
   version: 2
   test:
     jobs:
-      - install
+      - install:
+          <<: *filters
       - group-1:
+          <<: *filters
           requires:
             - install
       - group-2:
+          <<: *filters
           requires:
             - install
       - group-3:
+          <<: *filters
           requires:
             - install
       - group-4:
+          <<: *filters
           requires:
             - install
       - cli-ui:
+          <<: *filters
           requires:
             - install

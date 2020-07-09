@@ -3,7 +3,7 @@
 
 const { chalk, hasGit } = require('@vue/cli-shared-utils')
 
-module.exports = [
+const prompts = module.exports = [
   {
     name: `classComponent`,
     type: `confirm`,
@@ -13,7 +13,7 @@ module.exports = [
   {
     name: `useTsWithBabel`,
     type: `confirm`,
-    message: `Use Babel alongside TypeScript for auto-detected polyfills?`
+    message: 'Use Babel alongside TypeScript (required for modern mode, auto-detected polyfills, transpiling JSX)?'
   },
   {
     name: `lint`,
@@ -36,5 +36,25 @@ module.exports = [
         value: 'commit'
       }
     ]
+  },
+  {
+    name: `convertJsToTs`,
+    type: `confirm`,
+    message: `Convert all .js files to .ts?`,
+    default: true
+  },
+  {
+    name: `allowJs`,
+    type: `confirm`,
+    message: `Allow .js files to be compiled?`,
+    default: false
   }
 ]
+
+// in RC6+ the export can be function, but that would break invoke for RC5 and
+// below, so this is a temporary compatibility hack until we release stable.
+// TODO just export the function in 3.0.0
+module.exports.getPrompts = pkg => {
+  prompts[2].when = () => !('@vue/cli-plugin-eslint' in (pkg.devDependencies || {}))
+  return prompts
+}

@@ -1,7 +1,7 @@
 // Subs
 const channels = require('../channels')
 
-let map = new Map()
+const map = new Map()
 
 function get (id, context) {
   return map.get(id)
@@ -27,7 +27,7 @@ function set (data, context) {
 }
 
 function remove (id, context) {
-  context.pubsub.publish(channels.PROGRESS_REMOVED, { progressRemoved: { id } })
+  context.pubsub.publish(channels.PROGRESS_REMOVED, { progressRemoved: id })
   return map.delete(id)
 }
 

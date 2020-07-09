@@ -1,6 +1,6 @@
 <template>
   <div class="vue-webpack-dashboard">
-    <div class="pane-toolbar">
+    <div class="pane-toolbar card">
       <VueIcon icon="dashboard"/>
       <div class="title">{{ $t('org.vue.vue-webpack.dashboard.title') }}</div>
 
@@ -13,6 +13,7 @@
           :disabled="!serveUrl"
           :href="serveUrl"
           target="_blank"
+          rel="noopener noreferrer"
         />
         <VueIcon
           icon="lens"
@@ -40,7 +41,7 @@
       />
     </div>
 
-    <div class="content vue-ui-grid default-gap">
+    <div class="content vue-ui-grid">
       <BuildStatus />
       <BuildProgress />
       <SpeedStats class="span-2"/>
@@ -49,7 +50,7 @@
     </div>
 
     <div class="logo">
-      <a href="https://webpack.js.org/" target="_blank">
+      <a href="https://webpack.js.org/" target="_blank" rel="noopener noreferrer">
         <img src="../assets/webpack.svg" class="webpack-logo">
       </a>
     </div>
@@ -90,12 +91,13 @@ export default {
 .vue-webpack-dashboard
   .content
     grid-template-columns 9fr 4fr
+    grid-gap $padding-item
 
     >>>
       .title
         color lighten($vue-ui-color-dark, 60%)
         font-size 20px
-        font-weight lighter
+        font-weight 300
         text-align center
         margin-bottom $padding-item
 
@@ -107,7 +109,7 @@ export default {
       .info-block
         v-box()
         box-center()
-        font-weight lighter
+        font-weight 300
         text-align center
 
         .label
@@ -124,13 +126,8 @@ export default {
             opacity .75
             font-size 16px
 
-  .pane-toolbar,
-  .content >>> > div
+  /deep/ .card
     padding $padding-item
-    background $vue-ui-color-light-neutral
-    border-radius $br
-    .vue-ui-dark-mode &
-      background $vue-ui-color-dark
 
   .pane-toolbar
     margin-bottom $padding-item

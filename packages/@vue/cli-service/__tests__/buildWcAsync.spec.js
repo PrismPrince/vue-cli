@@ -1,8 +1,8 @@
-jest.setTimeout(15000)
+jest.setTimeout(30000)
 
 const path = require('path')
 const portfinder = require('portfinder')
-const { createServer } = require('http-server')
+const createServer = require('@vue/cli-test-utils/createServer')
 const { defaultPreset } = require('@vue/cli/lib/options')
 const create = require('@vue/cli-test-utils/createTestProject')
 const launchPuppeteer = require('@vue/cli-test-utils/launchPuppeteer')
@@ -19,10 +19,10 @@ test('build as wc in async mode', async () => {
   expect(project.has('dist/build-wc-async.min.js')).toBe(true)
 
   // code-split chunks
-  expect(project.has('dist/build-wc-async.0.js')).toBe(true)
-  expect(project.has('dist/build-wc-async.0.min.js')).toBe(true)
   expect(project.has('dist/build-wc-async.1.js')).toBe(true)
   expect(project.has('dist/build-wc-async.1.min.js')).toBe(true)
+  expect(project.has('dist/build-wc-async.2.js')).toBe(true)
+  expect(project.has('dist/build-wc-async.2.min.js')).toBe(true)
 
   const port = await portfinder.getPortPromise()
   server = createServer({ root: path.join(project.dir, 'dist') })
@@ -60,6 +60,10 @@ test('build as wc in async mode', async () => {
 })
 
 afterAll(async () => {
-  await browser.close()
-  server.close()
+  if (browser) {
+    await browser.close()
+  }
+  if (server) {
+    server.close()
+  }
 })

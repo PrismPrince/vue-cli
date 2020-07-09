@@ -1,18 +1,21 @@
-import SHARED_DATA from '../graphql/sharedData.gql'
-import SHARED_DATA_UPDATE from '../graphql/sharedDataUpdate.gql'
-import SHARED_DATA_UPDATED from '../graphql/sharedDataUpdated.gql'
+import SHARED_DATA from '@/graphql/shared-data/sharedData.gql'
+import SHARED_DATA_UPDATE from '@/graphql/shared-data/sharedDataUpdate.gql'
+import SHARED_DATA_UPDATED from '@/graphql/shared-data/sharedDataUpdated.gql'
+import CURRENT_PROJECT_ID from '@/graphql/project/currentProjectId.gql'
 
-function genQuery (id) {
+function genQuery (id, projectId) {
   return {
     query: SHARED_DATA,
     variables: {
-      id
+      id,
+      projectId
     },
     update: ({ sharedData }) => (sharedData && sharedData.value) || undefined,
     subscribeToMore: {
       document: SHARED_DATA_UPDATED,
       variables: {
-        id
+        id,
+        projectId
       },
       updateQuery: (previousResult, { subscriptionData }) => {
         return {
@@ -40,21 +43,21 @@ export default {
         })
       },
 
-      created () {
+      async created () {
         const options = this.$options.sharedData
         if (options) {
           if (typeof options === 'function') {
             let smartQueries
-            this.$watch(options.bind(this), result => {
+            this.$watch(options.bind(this), async result => {
               if (smartQueries) {
                 smartQueries.forEach(s => s.destroy())
               }
-              smartQueries = this.$syncSharedData(result)
+              smartQueries = await this.$syncSharedData(result)
             }, {
               immediate: true
             })
           } else {
-            this.$syncSharedData(options)
+            await this.$syncSharedData(options)
           }
           // Force watchers to re-evaluate
           // Because we just added the proxies to this.$data.$sharedData[key]
@@ -65,19 +68,39 @@ export default {
       },
 
       methods: {
+        $getProjectId () {
+          return new Promise((resolve) => {
+            const client = this.$apollo.getClient()
+            const observable = client.watchQuery({
+              query: CURRENT_PROJECT_ID
+            })
+            const sub = observable.subscribe({
+              next ({ data }) {
+                if (data.currentProjectId) {
+                  sub.unsubscribe()
+                  resolve(data.currentProjectId)
+                }
+              }
+            })
+          })
+        },
+
         async $getSharedData (id) {
+          const projectId = await this.$getProjectId()
           const result = await this.$apollo.query({
             query: SHARED_DATA,
             variables: {
-              id
+              id,
+              projectId
             }
           })
           return result.sharedData.value
         },
 
-        $watchSharedData (id, cb) {
+        async $watchSharedData (id, cb) {
+          const projectId = await this.$getProjectId()
           return this.$apollo.addSmartQuery(id, {
-            ...genQuery(id),
+            ...genQuery(id, projectId),
             manual: true,
             result: ({ data }) => {
               data && data.sharedData && cb(data.sharedData.value)
@@ -85,18 +108,19 @@ export default {
           })
         },
 
-        $setSharedData (id, value) {
+        async $setSharedData (id, value) {
+          const projectId = await this.$getProjectId()
           return this.$apollo.mutate({
             mutation: SHARED_DATA_UPDATE,
             variables: {
               id,
-              value
+              value,
+              projectId
             }
           })
         },
 
-        $syncSharedData (options) {
-          const smartQueries = []
+        async $syncSharedData (options) {
           for (const key in options) {
             const id = options[key]
             this.$set(this.$data.$sharedData, key, null)
@@ -110,8 +134,13 @@ export default {
               enumerable: true,
               configurable: true
             })
+          }
+          const projectId = await this.$getProjectId()
+          const smartQueries = []
+          for (const key in options) {
+            const id = options[key]
             const smartQuery = this.$apollo.addSmartQuery(key, {
-              ...genQuery(id),
+              ...genQuery(id, projectId),
               update: undefined,
               manual: true,
               result: (result) => {

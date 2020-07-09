@@ -20,6 +20,7 @@ extend type Mutation {
   projectRemove (id: ID!): Boolean!
   projectCwdReset: String
   projectSetFavorite (id: ID!, favorite: Int!): Project!
+  projectRename (id: ID!, name: String!): Project!
   presetApply (id: ID!): ProjectCreation
   featureSetEnabled (id: ID!, enabled: Boolean): Feature
 }
@@ -33,6 +34,7 @@ type Project {
   plugins: [Plugin]
   tasks: [Task]
   homepage: String
+  openDate: JSON
 }
 
 enum ProjectType {
@@ -43,6 +45,7 @@ enum ProjectType {
 input ProjectCreateInput {
   folder: String!
   force: Boolean!
+  bare: Boolean!
   packageManager: PackageManager
   preset: String!
   remote: String
@@ -54,6 +57,7 @@ input ProjectCreateInput {
 
 input ProjectImportInput {
   path: String!
+  force: Boolean
 }
 
 type Preset implements DescribedEntity {
@@ -81,9 +85,9 @@ type Feature implements DescribedEntity {
 
 exports.resolvers = {
   Project: {
-    type: (project, args, context) => projects.getType(project),
+    type: (project, args, context) => projects.getType(project, context),
     plugins: (project, args, context) => plugins.list(project.path, context),
-    tasks: (project, args, context) => tasks.list({ file: project.path, api: false }, context),
+    tasks: (project, args, context) => tasks.list({ file: project.path }, context),
     homepage: (project, args, context) => projects.getHomepage(project, context)
   },
 
@@ -102,6 +106,7 @@ exports.resolvers = {
     projectRemove: (root, { id }, context) => projects.remove(id, context),
     projectCwdReset: (root, args, context) => projects.resetCwd(context),
     projectSetFavorite: (root, args, context) => projects.setFavorite(args, context),
+    projectRename: (root, args, context) => projects.rename(args, context),
     presetApply: (root, { id }, context) => projects.applyPreset(id, context),
     featureSetEnabled: (root, args, context) => projects.setFeatureEnabled(args, context)
   }

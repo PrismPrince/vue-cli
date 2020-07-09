@@ -1,10 +1,14 @@
-const execa = require('execa')
 const path = require('path')
+const fs = require('fs-extra')
 const parseDiff = require('../util/parse-diff')
 // Connectors
 const cwd = require('./cwd')
+// Utils
+const { execa, hasProjectGit } = require('@vue/cli-shared-utils')
 
 async function getNewFiles (context) {
+  if (!hasProjectGit(cwd.get())) return []
+
   const { stdout } = await execa('git', [
     'ls-files',
     '-o',
@@ -20,6 +24,10 @@ async function getNewFiles (context) {
 }
 
 async function getDiffs (context) {
+  if (!hasProjectGit(cwd.get())) return []
+
+  const { highlightCode } = require('../util/highlight')
+
   const newFiles = await getNewFiles(context)
   await execa('git', ['add', '-N', '*'], {
     cwd: cwd.get()
@@ -28,18 +36,48 @@ async function getDiffs (context) {
     cwd: cwd.get()
   })
   await reset(context)
-  const list = parseDiff(stdout).map(
-    fileDiff => ({
+  const list = parseDiff(stdout)
+  for (const n in list) {
+    const fileDiff = list[n]
+    const isNew = newFiles.includes(fileDiff.to)
+    let fromContent
+    if (!isNew) {
+      const result = await execa('git', ['show', `HEAD:${fileDiff.from}`], {
+        cwd: cwd.get()
+      })
+      fromContent = result.stdout
+    }
+    const highlightedContentFrom = fromContent && highlightCode(fileDiff.from, fromContent).split('\n')
+    const highlightedContentTo = highlightCode(fileDiff.to, fs.readFileSync(path.resolve(cwd.get(), fileDiff.to), { encoding: 'utf8' })).split('\n')
+    for (const chunk of fileDiff.chunks) {
+      for (const change of chunk.changes) {
+        const firstChar = change.content.charAt(0)
+        let highlightedCode
+        if (change.normal) {
+          highlightedCode = highlightedContentFrom[change.ln1 - 1]
+        } else if (change.type === 'del') {
+          highlightedCode = highlightedContentFrom[change.ln - 1]
+        } else if (change.type === 'add') {
+          highlightedCode = highlightedContentTo[change.ln - 1]
+        }
+        if (highlightedCode) {
+          change.content = firstChar + highlightedCode
+        }
+      }
+    }
+    list[n] = {
       id: fileDiff.index.join(' '),
       ...fileDiff,
-      new: newFiles.includes(fileDiff.to)
-    })
-  )
+      new: isNew
+    }
+  }
 
   return list
 }
 
 async function commit (message, context) {
+  if (!hasProjectGit(cwd.get())) return false
+
   await execa('git', ['add', '*'], {
     cwd: cwd.get()
   })
@@ -50,6 +88,8 @@ async function commit (message, context) {
 }
 
 async function reset (context) {
+  if (!hasProjectGit(cwd.get())) return false
+
   await execa('git', ['reset'], {
     cwd: cwd.get()
   })
@@ -57,6 +97,8 @@ async function reset (context) {
 }
 
 async function getRoot (context) {
+  if (!hasProjectGit(cwd.get())) return cwd.get()
+
   const { stdout } = await execa('git', [
     'rev-parse',
     '--show-toplevel'

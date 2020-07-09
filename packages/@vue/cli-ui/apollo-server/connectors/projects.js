@@ -5,9 +5,8 @@ const Creator = require('@vue/cli/lib/Creator')
 const { getPromptModules } = require('@vue/cli/lib/util/createTools')
 const { getFeatures } = require('@vue/cli/lib/util/features')
 const { defaults } = require('@vue/cli/lib/options')
-const { toShortPluginId } = require('@vue/cli-shared-utils')
-const { progress: installProgress } = require('@vue/cli/lib/util/installDeps')
-const { clearModule } = require('@vue/cli/lib/util/module')
+const { toShortPluginId, execa } = require('@vue/cli-shared-utils')
+const { progress: installProgress } = require('@vue/cli/lib/util/executeCommand')
 const parseGitConfig = require('parse-git-config')
 // Connectors
 const progress = require('./progress')
@@ -16,6 +15,7 @@ const prompts = require('./prompts')
 const folders = require('./folders')
 const plugins = require('./plugins')
 const locales = require('./locales')
+const logs = require('./logs')
 // Context
 const getContext = require('../context')
 // Utils
@@ -49,7 +49,7 @@ function findByPath (file, context) {
 }
 
 function autoClean (projects, context) {
-  let result = []
+  const result = []
   for (const project of projects) {
     if (fs.existsSync(project.path)) {
       result.push(project)
@@ -77,7 +77,7 @@ function getLast (context) {
 function generatePresetDescription (preset) {
   let description = preset.features.join(', ')
   if (preset.raw.useConfigFiles) {
-    description += ` (Use config files)`
+    description += ' (Use config files)'
   }
   return description
 }
@@ -259,50 +259,21 @@ async function create (input, context) {
 
     const targetDir = path.join(cwd.get(), input.folder)
 
-    // Delete existing folder
-    if (fs.existsSync(targetDir)) {
-      if (input.force) {
-        setProgress({
-          info: 'Cleaning folder...'
-        })
-        await folders.delete(targetDir)
-        setProgress({
-          info: null
-        })
-      } else {
-        throw new Error(`Folder ${targetDir} already exists`)
-      }
-    }
-
     cwd.set(targetDir, context)
     creator.context = targetDir
 
-    process.env.VUE_CLI_CONTEXT = targetDir
-    clearModule('@vue/cli-service/webpack.config.js', targetDir)
-
     const inCurrent = input.folder === '.'
-    const name = inCurrent ? path.relative('../', process.cwd()) : input.folder
-    creator.name = name
+    const name = creator.name = (inCurrent ? path.relative('../', process.cwd()) : input.folder).toLowerCase()
 
     // Answers
     const answers = prompts.getAnswers()
     await prompts.reset()
-    let index
 
     // Config files
+    let index
     if ((index = answers.features.indexOf('use-config-files')) !== -1) {
       answers.features.splice(index, 1)
       answers.useConfigFiles = 'files'
-    }
-
-    const createOptions = {
-      packageManager: input.packageManager
-    }
-    // Git
-    if (input.enableGit && input.gitCommitMessage) {
-      createOptions.git = input.gitCommitMessage
-    } else {
-      createOptions.git = input.enableGit
     }
 
     // Preset
@@ -330,11 +301,53 @@ async function create (input, context) {
     })
 
     // Create
-    await creator.create(createOptions, preset)
+    const args = [
+      '--skipGetStarted'
+    ]
+    if (input.packageManager) args.push('--packageManager', input.packageManager)
+    if (input.bar) args.push('--bare')
+    if (input.force) args.push('--force')
+    // Git
+    if (input.enableGit && input.gitCommitMessage) {
+      args.push('--git', input.gitCommitMessage)
+    } else if (!input.enableGit) {
+      args.push('--no-git')
+    }
+    // Preset
+    args.push('--inlinePreset', JSON.stringify(preset))
+
+    log('create', name, args)
+
+    const child = execa('vue', [
+      'create',
+      name,
+      ...args
+    ], {
+      cwd: cwd.get(),
+      stdio: ['inherit', 'pipe', 'inherit']
+    })
+
+    const onData = buffer => {
+      const text = buffer.toString().trim()
+      if (text) {
+        setProgress({
+          info: text
+        })
+        logs.add({
+          type: 'info',
+          message: text
+        }, context)
+      }
+    }
+
+    child.stdout.on('data', onData)
+
+    await child
+
     removeCreator()
 
     notify({
-      title: `Project created`,
+      title: 'Project created',
       message: `Project ${cwd.get()} created`,
       icon: 'done'
     })
@@ -346,7 +359,7 @@ async function create (input, context) {
 }
 
 async function importProject (input, context) {
-  if (!fs.existsSync(path.join(input.path, 'node_modules'))) {
+  if (!input.force && !fs.existsSync(path.join(input.path, 'node_modules'))) {
     throw new Error('NO_MODULES')
   }
 
@@ -381,7 +394,12 @@ async function open (id, context) {
   // Reset locales
   locales.reset(context)
   // Load plugins
-  plugins.list(project.path, context)
+  await plugins.list(project.path, context)
+
+  // Date
+  context.db.get('projects').find({ id }).assign({
+    openDate: Date.now()
+  }).write()
 
   // Save for next time
   context.db.set('config.lastOpenProject', id).write()
@@ -413,7 +431,16 @@ function setFavorite ({ id, favorite }, context) {
   return findOne(id, context)
 }
 
-function getType (project) {
+function rename ({ id, name }, context) {
+  context.db.get('projects').find({ id }).assign({ name }).write()
+  return findOne(id, context)
+}
+
+function getType (project, context) {
+  if (typeof project === 'string') {
+    project = findByPath(project, context)
+  }
+  if (!project) return 'unknown'
   return !project.type ? 'vue' : project.type
 }
 
@@ -439,7 +466,7 @@ async function autoOpenLastProject () {
     try {
       await open(id, context)
     } catch (e) {
-      log(`Project can't be auto-opened`, id)
+      log('Project can\'t be auto-opened', id)
     }
   }
 }
@@ -461,6 +488,7 @@ module.exports = {
   remove,
   resetCwd,
   setFavorite,
+  rename,
   initCreator,
   removeCreator,
   getType,

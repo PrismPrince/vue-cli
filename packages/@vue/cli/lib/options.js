@@ -1,29 +1,28 @@
 const fs = require('fs')
-const os = require('os')
-const path = require('path')
 const cloneDeep = require('lodash.clonedeep')
+const { getRcPath } = require('./util/rcPath')
+const { exit } = require('@vue/cli-shared-utils/lib/exit')
 const { error } = require('@vue/cli-shared-utils/lib/logger')
 const { createSchema, validate } = require('@vue/cli-shared-utils/lib/validate')
-const { exit } = require('@vue/cli-shared-utils/lib/exit')
-const { xdgConfigPath } = require('./util/xdgConfig')
 
-const rcPath = exports.rcPath = (
-  process.env.VUE_CLI_CONFIG_PATH ||
-  xdgConfigPath('.vuerc') ||
-  path.join(os.homedir(), '.vuerc')
-)
+const rcPath = exports.rcPath = getRcPath('.vuerc')
 
 const presetSchema = createSchema(joi => joi.object().keys({
+  bare: joi.boolean(),
   useConfigFiles: joi.boolean(),
+  // TODO: Use warn for router and vuex once @hapi/joi v16 releases
   router: joi.boolean(),
+  routerHistoryMode: joi.boolean(),
   vuex: joi.boolean(),
-  cssPreprocessor: joi.string().only(['sass', 'less', 'stylus']),
+  cssPreprocessor: joi.string().only(['sass', 'dart-sass', 'node-sass', 'less', 'stylus']),
   plugins: joi.object().required(),
   configs: joi.object()
 }))
 
 const schema = createSchema(joi => joi.object().keys({
-  packageManager: joi.string().only(['yarn', 'npm']),
+  latestVersion: joi.string().regex(/^\d+\.\d+\.\d+(-(alpha|beta|rc)\.\d+)?$/),
+  lastChecked: joi.date().timestamp(),
+  packageManager: joi.string().only(['yarn', 'npm', 'pnpm']),
   useTaobaoRegistry: joi.boolean(),
   presets: joi.object().pattern(/^/, presetSchema)
 }))
@@ -33,8 +32,6 @@ exports.validatePreset = preset => validate(preset, presetSchema, msg => {
 })
 
 exports.defaultPreset = {
-  router: false,
-  vuex: false,
   useConfigFiles: false,
   cssPreprocessor: undefined,
   plugins: {
@@ -47,6 +44,9 @@ exports.defaultPreset = {
 }
 
 exports.defaults = {
+  lastChecked: undefined,
+  latestVersion: undefined,
+
   packageManager: undefined,
   useTaobaoRegistry: undefined,
   presets: {
@@ -68,7 +68,7 @@ exports.loadOptions = () => {
         `Error loading saved preferences: ` +
         `~/.vuerc may be corrupted or have syntax errors. ` +
         `Please fix/delete it and re-run vue-cli in manual mode.\n` +
-        `(${e.message})`,
+        `(${e.message})`
       )
       exit(1)
     }
@@ -94,6 +94,7 @@ exports.saveOptions = toSave => {
   cachedOptions = options
   try {
     fs.writeFileSync(rcPath, JSON.stringify(options, null, 2))
+    return true
   } catch (e) {
     error(
       `Error saving preferences: ` +
@@ -106,5 +107,5 @@ exports.saveOptions = toSave => {
 exports.savePreset = (name, preset) => {
   const presets = cloneDeep(exports.loadOptions().presets || {})
   presets[name] = preset
-  exports.saveOptions({ presets })
+  return exports.saveOptions({ presets })
 }

@@ -52,7 +52,7 @@ describe('Vue project manager', () => {
     })
     cy.get('.loading-screen .vue-ui-loading-indicator').should('be.visible')
     cy.get('.project-home', { timeout: 250000 }).should('be.visible')
-    cy.get('.top-bar .current-project').should('contain', 'cli-ui-test')
+    cy.get('.project-nav .current-project').should('contain', 'cli-ui-test')
   })
 
   it('Favorites the project', () => {
@@ -73,10 +73,10 @@ describe('Vue project manager', () => {
       cy.get('.folder-explorer').should('be.visible')
       cy.get('.edit-path-button').click()
       cy.get('.path-input input').clear().type(Cypress.env('cwd') + '{enter}')
-      cy.get(`.folder-explorer-item:contains('cli-ui-test')`).click()
+      cy.get('.folder-explorer-item:contains(\'cli-ui-test\')').click()
       cy.get('.import-project').should('not.have.class', 'disabled').click()
     })
     cy.get('.project-home').should('be.visible')
-    cy.get('.top-bar .current-project').should('contain', 'cli-ui-test')
+    cy.get('.project-nav .current-project').should('contain', 'cli-ui-test')
   })
 })

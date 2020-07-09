@@ -84,13 +84,13 @@ module.exports = function (input) {
 
   const del = function (line) {
     if (!current) return
-    current.changes.push({type: 'del', del: true, ln: lnDel++, content: line})
+    current.changes.push({ type: 'del', del: true, ln: lnDel++, content: line })
     file.deletions++
   }
 
   const add = function (line) {
     if (!current) return
-    current.changes.push({type: 'add', add: true, ln: lnAdd++, content: line})
+    current.changes.push({ type: 'add', add: true, ln: lnAdd++, content: line })
     file.additions++
   }
 
@@ -135,7 +135,7 @@ module.exports = function (input) {
   ]
 
   const parse = function (line) {
-    for (let p of schema) {
+    for (const p of schema) {
       const m = line.match(p[0])
       if (m) {
         p[1](line, m)
@@ -145,7 +145,7 @@ module.exports = function (input) {
     return false
   }
 
-  for (let line of lines) {
+  for (const line of lines) {
     parse(line)
   }
 

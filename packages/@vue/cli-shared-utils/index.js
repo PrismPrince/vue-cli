@@ -3,8 +3,12 @@
   'exit',
   'ipc',
   'logger',
+  'module',
+  'object',
   'openBrowser',
+  'pkg',
   'pluginResolution',
+  'launch',
   'request',
   'spinner',
   'validate'
@@ -14,3 +18,11 @@
 
 exports.chalk = require('chalk')
 exports.execa = require('execa')
+exports.semver = require('semver')
+
+Object.defineProperty(exports, 'installedBrowsers', {
+  enumerable: true,
+  get () {
+    return exports.getInstalledBrowsers()
+  }
+})

@@ -9,16 +9,15 @@ const plugins = require('./plugins')
 const folders = require('./folders')
 const prompts = require('./prompts')
 // Utils
-const { get, set, remove } = require('../../src/util/object')
+const { get, set, unset, loadModule } = require('@vue/cli-shared-utils')
 const { log } = require('../util/logger')
-const { loadModule } = require('@vue/cli/lib/util/module')
 const extendJSConfig = require('@vue/cli/lib/util/extendJSConfig')
 
 const fileTypes = ['js', 'json', 'yaml']
 let current = {}
 
 function list (context) {
-  return plugins.getApi().configurations
+  return plugins.getApi(cwd.get()).configurations
 }
 
 function findOne (id, context) {
@@ -124,7 +123,7 @@ function writeFile (config, fileId, data, changedFields, context) {
     } else if (file.type === 'yaml') {
       rawContent = yaml.safeDump(data)
     } else if (file.type === 'js') {
-      let source = fs.readFileSync(file.path, { encoding: 'utf8' })
+      const source = fs.readFileSync(file.path, { encoding: 'utf8' })
       if (!source.trim()) {
         rawContent = `module.exports = ${stringifyJS(data, null, 2)}`
       } else {
@@ -183,13 +182,17 @@ async function getPromptTabs (id, context) {
     }
     await prompts.start()
 
-    plugins.callHook('configRead', [{
-      config,
-      data,
-      onReadData,
-      tabs,
-      cwd: cwd.get()
-    }], context)
+    plugins.callHook({
+      id: 'configRead',
+      args: [{
+        config,
+        data,
+        onReadData,
+        tabs,
+        cwd: cwd.get()
+      }],
+      file: cwd.get()
+    }, context)
 
     return tabs
   }
@@ -201,7 +204,7 @@ async function save (id, context) {
   if (config) {
     if (current.config === config) {
       const answers = prompts.getAnswers()
-      let data = clone(current.data)
+      const data = clone(current.data)
       const changedFields = {}
       const getChangedFields = fileId => changedFields[fileId] || (changedFields[fileId] = [])
 
@@ -228,7 +231,7 @@ async function save (id, context) {
 
               const value = newData[key]
               if (typeof value === 'undefined') {
-                remove(data[fileId], key)
+                unset(data[fileId], key)
               } else {
                 set(data[fileId], key, value)
               }
@@ -252,12 +255,16 @@ async function save (id, context) {
 
       writeData({ config, data, changedFields }, context)
 
-      plugins.callHook('configWrite', [{
-        config,
-        data,
-        changedFields,
-        cwd: cwd.get()
-      }], context)
+      plugins.callHook({
+        id: 'configWrite',
+        args: [{
+          config,
+          data,
+          changedFields,
+          cwd: cwd.get()
+        }],
+        file: cwd.get()
+      }, context)
 
       current = {}
     }

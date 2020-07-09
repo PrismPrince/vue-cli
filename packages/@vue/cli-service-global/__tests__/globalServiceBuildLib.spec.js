@@ -3,7 +3,7 @@ jest.setTimeout(20000)
 const fs = require('fs-extra')
 const path = require('path')
 const portfinder = require('portfinder')
-const { createServer } = require('http-server')
+const createServer = require('@vue/cli-test-utils/createServer')
 const execa = require('execa')
 const launchPuppeteer = require('@vue/cli-test-utils/launchPuppeteer')
 
@@ -54,6 +54,10 @@ test('global build --target lib', async () => {
 })
 
 afterAll(async () => {
-  await browser.close()
-  server.close()
+  if (browser) {
+    await browser.close()
+  }
+  if (server) {
+    server.close()
+  }
 })
